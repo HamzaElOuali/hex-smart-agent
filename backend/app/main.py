@@ -10,12 +10,12 @@ from fastapi import (
     HTTPException, status, Query
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse            # ★ NEW
+from fastapi.responses import StreamingResponse           
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
-import httpx                                             # ★ NEW
+import httpx                                          
 
 from .security  import verify_token
 from .          import models
