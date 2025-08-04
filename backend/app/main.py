@@ -1,8 +1,8 @@
 # app/main.py
 # ──────────────────────────────────────────────────────────────────────────────
-#  Hex Smart Agent  – FastAPI backend
+#  Hex Smart Agent  – FastAPI backend
 # ──────────────────────────────────────────────────────────────────────────────
-import os, json, traceback, requests
+import os, json, requests
 from typing import List, Optional
 
 from fastapi import (
@@ -10,12 +10,12 @@ from fastapi import (
     HTTPException, status, Query
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse           
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel, Field
-import fitz  # PyMuPDF
-import httpx                                          
+import fitz  # PyMuPDF
+import httpx
 
 from .security  import verify_token
 from .          import models
@@ -23,7 +23,7 @@ from .database  import engine, Base, get_db
 from .embedding import (
     store_chunks_in_weaviate,
     create_weaviate_schema,
-    search_chunks
+    search_chunks,
 )
 
 # ───────────────────────── Configuration ──────────────────────────
@@ -32,7 +32,7 @@ VECTOR_ENABLED = os.getenv("VECTOR_ENABLED", "true").lower() == "true"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ───────────────────────── FastAPI app ────────────────────────────
-app = FastAPI(title="Hex Smart Agent Backend", version="0.1.1")
+app = FastAPI(title="Hex Smart Agent Backend", version="0.2.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,7 +49,7 @@ def _startup() -> None:
     try:
         create_weaviate_schema()
     except Exception as exc:
-        print(f"[Startup] vector‑store init failed: {exc}")
+        print(f"[Startup] vector-store init failed: {exc}")
 
 # ───────────────────────── Pydantic models ────────────────────────
 class DocumentOut(BaseModel):
@@ -89,7 +89,7 @@ def _validate_pdf_upload(file: UploadFile) -> None:
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Unsupported file type '{ext}'. Only PDF is allowed.")
     if file.content_type not in ALLOWED_MIME:
-        print(f"[Upload] warning: content‑type={file.content_type}")
+        print(f"[Upload] warning: content-type={file.content_type}")
 
 def _safe_filename(name: str) -> str:
     base            = os.path.basename(name)
@@ -103,7 +103,7 @@ def _safe_filename(name: str) -> str:
 # ───────────────────────── Routes ─────────────────────────────────
 @app.get("/")
 def root():
-    return {"message": "Hello from FastAPI backend!", "vector_enabled": VECTOR_ENABLED}
+    return {"message": "Hello from FastAPI backend!", "vector_enabled": VECTOR_ENABLED}
 
 @app.get("/healthz")
 def healthz(db: Session = Depends(get_db)):
@@ -207,13 +207,13 @@ def search(query: str, limit: int = 5, user = Depends(verify_token)):
 
 # ───────────────────────── /ask  (RAG) ───────────────────────────
 OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL    = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-r1-0528:free")
+OPENROUTER_MODEL    = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-small-3.1-24b-instruct:free")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
 
 class AskRequest(BaseModel):
     question : str
-    top_k    : int  = Field(4, ge=1, le=12)
-    min_score: float = Field(0.5, ge=0.0, le=1.0)
+    top_k    : int  = Field(10, ge=1, le=20)
+    min_score: float = Field(0.15, ge=0.0, le=1.0)
 
 class SourceChunk(BaseModel):
     doc_id     : int
@@ -238,7 +238,7 @@ def _build_router_body(system_prompt: str, user_prompt: str) -> dict:
         "temperature": 0.0,
         "presence_penalty": 0,
         "frequency_penalty": 0,
-        "max_tokens": 400,
+        "max_tokens": 800,
     }
 
 def _call_openrouter_sync(body: dict) -> str:
@@ -247,13 +247,9 @@ def _call_openrouter_sync(body: dict) -> str:
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()
 
-# ------------- NEW streaming + non‑streaming endpoint -------------
+# ------------- streaming + non-streaming endpoint -------------
 @app.post("/ask", response_model=AskResponse, tags=["RAG"])
 async def ask(req: AskRequest, stream: bool = False, user = Depends(verify_token)):
-    """
-    If `stream=true` query param is provided, reply as Server‑Sent Events (SSE).
-    Otherwise return the classic JSON payload.
-    """
     if not OPENROUTER_API_KEY:
         raise HTTPException(500, "OPENROUTER_API_KEY not configured")
 
@@ -269,16 +265,14 @@ async def ask(req: AskRequest, stream: bool = False, user = Depends(verify_token
         ) if stream else empty
 
     context = "\n\n".join(
-        f"[Doc {r['doc_id']} p{r.get('page_num','?')}] {r['chunk']}"
+        f"[Doc {r['doc_id']} p{r.get('page_num','?')}] {r['chunk']}"
         for r in ctx_items
     )
 
     system_prompt = (
-        "You are Hex‑Doc Agent. Answer strictly from CONTEXT. "
-        "If CONTEXT already contains a numbered or bulleted list that answers the question, "
-        "reproduce that list verbatim before any extra text. Keep the reply under 120 words. "
-        "If you already reproduced a list verbatim, do not add any additional commentary. "
-        "If the answer is missing, reply: 'I don’t know based on the provided documents.'"
+        "You are Hex-Doc Agent. Prefer answers grounded in CONTEXT; "
+        "if you are certain CONTEXT lacks the answer, say so. "
+        "Keep replies under 150 words."
     )
     user_prompt = f"QUESTION:\n{req.question}\n\nCONTEXT:\n{context}\n\nAnswer:"
     body        = _build_router_body(system_prompt, user_prompt)
@@ -304,30 +298,52 @@ async def ask(req: AskRequest, stream: bool = False, user = Depends(verify_token
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
 
     async def event_generator():
-        # Empty shell so the frontend creates the bubble
+        # empty shell so the frontend creates the bubble
         yield "data: " + json.dumps({"answer": ""}) + "\n\n"
 
-        # Stream tokens from OpenRouter
+        buffer = ""  # holds a partial frame
+
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream("POST", OPENROUTER_BASE_URL, headers=headers, json=body) as resp:
-                    async for chunk in resp.aiter_text():
-                        if chunk.strip():
-                            yield "data: " + chunk + "\n\n"
+                    async for piece in resp.aiter_text():
+                        if not piece:
+                            continue
+                        buffer += piece
+
+                        # split into complete frames
+                        frames = buffer.split("\n\n")
+                        buffer = frames.pop()  # leftover partial
+
+                        for raw in frames:
+                            line = raw.strip()
+                            if not line:
+                                continue
+                            if not line.startswith("data:"):
+                                line = "data: " + line
+                            yield line + "\n\n"
         except Exception as exc:
             print("[ASK] streaming error:", exc)
             yield "event: error\ndata: OpenRouter stream failed\n\n"
             return
 
-        # Final frame with sources
-        final_sources = [s.model_dump() for s in [
-            SourceChunk(
-                doc_id=r["doc_id"], title=r["title"], page_num=r.get("page_num"),
-                chunk_index=r["chunk_index"], text=r["chunk"], score=r.get("score"),
-                filename=r.get("filename"),
-            ) for r in ctx_items
-        ]]
-        yield "data: " + json.dumps({"sources": final_sources}) + "\n\n"
+        # flush final partial frame if any
+        if buffer.strip():
+            out = buffer if buffer.startswith("data:") else "data: " + buffer
+            yield out.rstrip() + "\n\n"
+
+        # deduplicate sources
+        unique = {}
+        for r in ctx_items:
+            key = (r["doc_id"], r.get("page_num"))
+            if key not in unique:
+                unique[key] = SourceChunk(
+                    doc_id=r["doc_id"], title=r["title"], page_num=r.get("page_num"),
+                    chunk_index=r["chunk_index"], text=r["chunk"], score=r.get("score"),
+                    filename=r.get("filename"),
+                )
+
+        yield "data: " + json.dumps({"sources": [s.model_dump() for s in unique.values()]}) + "\n\n"
         yield "event: done\ndata: end\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -54,9 +54,19 @@ export default function App() {
     setChats((cs) =>
       cs.map((c) => {
         if (c.id !== activeId) return c;
+        /* deduplicate by doc_id + page_num */
+        const seen = new Set();
+        const uniq = [];
+        sources.forEach((s) => {
+          const key = `${s.doc_id}-${s.page_num ?? "?"}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            uniq.push(s);
+          }
+        });
         const msgs = [...c.messages];
         const lastIdx = msgs.length - 1;
-        msgs[lastIdx] = { ...msgs[lastIdx], sources };
+        msgs[lastIdx] = { ...msgs[lastIdx], sources: uniq };
         return { ...c, messages: msgs };
       })
     );
@@ -107,12 +117,12 @@ export default function App() {
         buffer += decoder.decode(value, { stream: true });
 
         /* split on double newline == SSE frame delimiter */
-        const frames = buffer.split(/\n\n/);
+        const frames = buffer.split(/\r?\n\r?\n/);
         buffer = frames.pop(); // keep incomplete frame
 
         frames.forEach((frame) => {
-          if (!frame.startsWith("data: ")) return;
-          const data = frame.slice(6).trim();
+          if (!frame.startsWith("data:")) return;
+          const data = frame.slice(frame.indexOf(":") + 1).trim();
           if (!data) return;
 
           let payload;
@@ -122,17 +132,12 @@ export default function App() {
             return;
           }
 
-          /* extract token in every known shape */
+          /* ── extract token in every known shape ── */
           const tokenChunk =
-            /* OpenRouter / OpenAI streaming (delta) */
             payload.choices?.[0]?.delta?.content ??
-            /* Some models use message.content */
             payload.choices?.[0]?.message?.content ??
-            /* Generic single‑field content */
             payload.content ??
-            /* Legacy non‑stream JSON */
             payload.answer ??
-            /* Very old plain‑text field */
             payload.text;
 
           if (tokenChunk) {
@@ -141,9 +146,7 @@ export default function App() {
           }
 
           /* final sources frame */
-          if (payload.sources) {
-            setSources(payload.sources);
-          }
+          if (payload.sources) setSources(payload.sources);
         });
       }
     } catch (err) {
@@ -164,12 +167,11 @@ export default function App() {
     }
   };
 
-  /* ───────────── handleFileSelect (unchanged) ───────────── */
+  /* ───────────── handleFileSelect ───────────── */
   const handleFileSelect = async (file) => {
     setSelectedFile(file);
     const fileName = file.name;
 
-    /* bubble showing selected file */
     setChats((cs) =>
       cs.map((c) =>
         c.id === activeId
@@ -206,7 +208,6 @@ export default function App() {
             : c
         )
       );
-      /* clear banner */
       setSelectedFile(null);
     } catch (err) {
       console.error("Upload failed:", err);
@@ -229,7 +230,7 @@ export default function App() {
     }
   };
 
-  /* new chat & select */
+  /* ───────────── chat management ───────────── */
   const handleNewChat = () => {
     const newId = Math.max(...chats.map((c) => c.id)) + 1;
     setChats([{ id: newId, title: `Chat ${newId}`, preview: "New chat started.", messages: [] }, ...chats]);
