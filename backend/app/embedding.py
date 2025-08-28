@@ -50,27 +50,56 @@ def close_client():
 
 # ─── Schema ──────────────────────────────────────────────────────────────────
 def create_weaviate_schema():
+    """
+    Create the collection if missing; otherwise ensure required properties exist.
+    This prevents older data (without page_num, etc.) from breaking UI references.
+    """
     if not VECTOR_ENABLED:
         return
     client = get_client()
-    if client and not client.collections.exists(COLLECTION_NAME):
+    if client is None:
+        return
+
+    required_props = [
+        ("doc_id",      DataType.INT),
+        ("title",       DataType.TEXT),
+        ("filename",    DataType.TEXT),
+        ("description", DataType.TEXT),
+        ("role",        DataType.TEXT),
+        ("chunk",       DataType.TEXT),
+        ("chunk_index", DataType.INT),
+        ("page_num",    DataType.INT),
+    ]
+
+    if not client.collections.exists(COLLECTION_NAME):
         client.collections.create(
             name=COLLECTION_NAME,
-            properties=[
-                Property("doc_id",      DataType.INT),
-                Property("title",       DataType.TEXT),
-                Property("filename",    DataType.TEXT),
-                Property("description", DataType.TEXT),
-                Property("role",        DataType.TEXT),
-                Property("chunk",       DataType.TEXT),
-                Property("chunk_index", DataType.INT),
-                Property("page_num",    DataType.INT),
-            ],
+            properties=[Property(name, dtype) for name, dtype in required_props],
             vectorizer_config=Configure.Vectorizer.none(),
             vector_index_config=Configure.VectorIndex.hnsw(dimensions=EMBED_DIM),
         )
         if EMBED_DEBUG:
             print(f"[Weaviate] created {COLLECTION_NAME} (dim={EMBED_DIM})")
+        return
+
+    # Self-heal: add any missing properties
+    col = client.collections.get(COLLECTION_NAME)
+    try:
+        cfg = col.config.get()
+        existing = {p.name for p in cfg.properties}
+    except Exception as e:
+        if EMBED_DEBUG:
+            print("[Weaviate] config.get() failed; skipping property sync:", e)
+        return
+
+    for pname, ptype in required_props:
+        if pname not in existing:
+            try:
+                col.config.add_property(Property(pname, ptype))
+                if EMBED_DEBUG:
+                    print(f"[Weaviate] added missing property: {pname}")
+            except Exception as e:
+                print(f"[Weaviate] failed to add property {pname}: {e}")
 
 # ─── Text helpers ────────────────────────────────────────────────────────────
 def split_text(text: str, max_tokens: int = DEFAULT_CHUNKTOK) -> List[str]:
@@ -122,6 +151,25 @@ def store_chunks_in_weaviate(doc, page_texts: List[str], page_nums: List[int]) -
         print(f"[Weaviate] stored {len(chunks)} chunks for doc {doc.id}")
     return len(chunks)
 
+# ─── Maintenance (used by /admin/reindex/{doc_id}) ───────────────────────────
+def delete_doc_chunks(doc_id: int) -> int:
+    """
+    Delete all vector objects for a given doc_id.
+    Returns number of matches deleted (if available).
+    """
+    if not VECTOR_ENABLED:
+        return 0
+    client = get_client()
+    if client is None:
+        return 0
+    col = client.collections.get(COLLECTION_NAME)
+    try:
+        res = col.data.delete_many(where=Filter.by_property("doc_id").equal(doc_id))
+        return getattr(res, "matches", 0)
+    except Exception as e:
+        print(f"[Weaviate] delete_many failed for doc_id={doc_id}: {e}")
+        return 0
+
 # ─── Hybrid search (vector + BM25) ───────────────────────────────────────────
 def search_chunks(query: str, role: str, limit: int = 8, alpha: float = HYBRID_ALPHA):
     if not VECTOR_ENABLED:
@@ -130,7 +178,7 @@ def search_chunks(query: str, role: str, limit: int = 8, alpha: float = HYBRID_A
     if client is None:
         return []
 
-    # ① embed the query *yourself* because vectorizer is disabled
+    # Embed the query (vectorizer disabled at collection level)
     vec = model.encode([query], convert_to_numpy=True)[0].tolist()
 
     role_filter = (
@@ -141,7 +189,7 @@ def search_chunks(query: str, role: str, limit: int = 8, alpha: float = HYBRID_A
     col = client.collections.get(COLLECTION_NAME)
     res = col.query.hybrid(
         query=query,                 # BM25 part
-        vector=vec,                  # vector part (fixes the error)
+        vector=vec,                  # vector part
         alpha=alpha,
         limit=limit,
         filters=role_filter,
@@ -163,7 +211,7 @@ def search_chunks(query: str, role: str, limit: int = 8, alpha: float = HYBRID_A
             "chunk":       p.get("chunk"),
             "filename":    p.get("filename"),
             "role":        p.get("role"),
-            "distance":    m.distance,
-            "score":       m.score,
+            "distance":    getattr(m, "distance", None),
+            "score":       getattr(m, "score", None),
         })
     return out

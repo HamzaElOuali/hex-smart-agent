@@ -7,6 +7,7 @@ class Document(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     filename = Column(String, nullable=False)
+    file_hash   = Column(String(64), index=True, unique=False)
     description = Column(Text)
     role = Column(String, nullable=False)
     content = Column(Text)
