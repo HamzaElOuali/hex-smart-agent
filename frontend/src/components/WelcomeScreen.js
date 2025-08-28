@@ -7,7 +7,7 @@ export default function WelcomeScreen({ suggestions = [], onPick }) {
         className="w-20 h-20 mb-4 object-contain"
         style={{ background: "none" }}
       />
-      <div className="text-2xl font-bold mb-2">Welcome to Hex-Doc Agent</div>
+      <div className="text-2xl font-bold mb-2">Welcome to JES-AI</div>
       <div className="mb-6">
         Your intelligent documentation assistant is ready to help.<br />
         Try one of these:

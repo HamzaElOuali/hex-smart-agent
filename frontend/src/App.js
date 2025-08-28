@@ -245,7 +245,7 @@ export default function App() {
                 ...c,
                 messages: [
                   ...c.messages,
-                  { text: `✅ PDF uploaded (${res.data.chunk_count} chunks)`, isUser: false }
+                  { text: `✅PDF uploaded successfully. The document has been fully processed and divided into ${res.data.chunk_count} semantic chunks for intelligent search and retrieval.`,  isUser: false }
                 ]
               }
             : c

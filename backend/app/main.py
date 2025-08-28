@@ -15,7 +15,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel, Field
-from app import metrics
 
 import fitz  # PyMuPDF
 import httpx

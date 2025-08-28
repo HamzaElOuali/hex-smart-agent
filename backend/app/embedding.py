@@ -146,7 +146,11 @@ def store_chunks_in_weaviate(doc, page_texts: List[str], page_nums: List[int]) -
                     chunk_index=i, page_num=pages[i], chunk=chunk
                 ),
                 vector=vectors[i],
+            
             )
+
+    print(f"[Weaviate] Stored {len(chunks)} chunks for doc_id={doc.id}")
+            
     if EMBED_DEBUG:
         print(f"[Weaviate] stored {len(chunks)} chunks for doc {doc.id}")
     return len(chunks)

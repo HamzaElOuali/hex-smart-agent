@@ -18,7 +18,7 @@ export default function ChatHeader({ isSidebarOpen, onSidebarToggle }) {
         style={{ background: "none" }}
       />
       <div>
-        <div className="font-bold text-lg">Hex-Doc Agent</div>
+        <div className="font-bold text-lg">JES-AI</div>
         <div className="text-gray-500 text-sm">
           Your intelligent documentation assistant
         </div>
